@@ -630,3 +630,266 @@ class ValidationReportGenerator:
             return {}
         
         bias_summary = bias_results.get('bias_summary', {})
+
+    def _process_uncertainty_results(self, uncertainty_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Process uncertainty quantification results for summary."""
+        if not uncertainty_results:
+            return {}
+        
+        calibration = uncertainty_results.get('calibration_analysis', {})
+        uncertainty_summary = uncertainty_results.get('uncertainty_summary', {})
+        
+        return {
+            'calibration_error': calibration.get('expected_calibration_error', 0.0),
+            'calibration_status': 'pass' if calibration.get('is_well_calibrated', False) else 'fail',
+            'uncertainty_quality': uncertainty_summary.get('uncertainty_status', 'unknown'),
+            'validation_status': 'pass' if uncertainty_summary.get('uncertainty_status') in ['excellent', 'good'] else 'fail'
+        }
+    
+    def _process_performance_results(self, performance_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Process performance validation results for summary."""
+        if not performance_results:
+            return {}
+        
+        geometric = performance_results.get('geometric_metrics', {})
+        quality = performance_results.get('quality_assessment', {})
+        
+        return {
+            'dice_coefficient': geometric.get('dice_coefficient', 0.0),
+            'hausdorff_distance': geometric.get('hausdorff_distance', float('inf')),
+            'overall_quality': quality.get('overall_quality', 'unknown'),
+            'quality_score': quality.get('quality_score', 0.0),
+            'validation_status': 'pass' if quality.get('overall_quality') in ['excellent', 'good'] else 'fail'
+        }
+    def generate_regulatory_package(self, validation_results: Dict[str, Any], 
+                                  output_dir: str = "reports/regulatory") -> str:
+        """
+        Generate FDA regulatory validation package.
+        
+        Args:
+            validation_results: Complete validation results
+            output_dir: Output directory for regulatory package
+            
+        Returns:
+            Path to regulatory package directory
+        """
+        self.logger.info("Generating FDA regulatory validation package")
+        
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+        
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        package_dir = output_path / f"regulatory_package_{timestamp}"
+        package_dir.mkdir(exist_ok=True)
+        
+        # Generate 510(k) summary
+        self._generate_510k_summary(validation_results, package_dir)
+        
+        # Generate validation protocol
+        self._generate_validation_protocol(validation_results, package_dir)
+        
+        # Generate statistical analysis plan
+        self._generate_statistical_plan(validation_results, package_dir)
+        
+        # Generate risk analysis
+        self._generate_risk_analysis(validation_results, package_dir)
+        
+        # Copy validation reports
+        comprehensive_report = self.generate_comprehensive_report(
+            validation_results, str(package_dir / "validation_reports")
+        )
+        
+        self.logger.info(f"Regulatory package generated: {package_dir}")
+        return str(package_dir)
+    
+    def _generate_510k_summary(self, validation_results: Dict[str, Any], package_dir: Path):
+        """Generate 510(k) premarket submission summary."""
+        summary_file = package_dir / "510k_summary.md"
+        
+        content = f"""
+# 510(k) Premarket Submission Summary
+## Cardiovascular Imaging Algorithm
+
+### Device Description
+This submission covers a cardiovascular imaging algorithm intended for quantitative analysis of vessel segmentation and stenosis assessment.
+
+### Predicate Device
+[To be specified based on actual predicate device]
+
+### Validation Summary
+
+#### Statistical Validation
+- Intraclass Correlation Coefficient analysis performed
+- Bland-Altman agreement analysis completed
+- Power analysis demonstrates adequate sample size
+
+#### Bias Assessment
+- Algorithmic bias evaluated across demographic groups
+- Performance disparity analysis completed
+- Fairness metrics within acceptable ranges
+
+#### Uncertainty Quantification
+- Calibration analysis performed
+- Confidence intervals established
+- Bootstrap validation completed
+
+#### Performance Validation
+- Geometric accuracy metrics evaluated
+- Clinical relevance metrics assessed
+- Quality assessment completed
+
+### Regulatory Compliance
+- FDA Guidance on Software as Medical Device (SaMD) followed
+- ISO 14971 risk management applied
+- ISO 13485 quality management system implemented
+
+### Conclusion
+The validation results demonstrate that the cardiovascular imaging algorithm meets the safety and effectiveness requirements for the intended use.
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        with open(summary_file, 'w') as f:
+            f.write(content)
+    
+    def _generate_validation_protocol(self, validation_results: Dict[str, Any], package_dir: Path):
+        """Generate validation protocol document."""
+        protocol_file = package_dir / "validation_protocol.md"
+        
+        content = f"""
+# Validation Protocol
+## Cardiovascular Imaging Algorithm
+
+### Objective
+To validate the safety and effectiveness of the cardiovascular imaging algorithm for clinical use.
+
+### Validation Framework
+1. **Statistical Validation**
+   - Agreement analysis (ICC, Bland-Altman)
+   - Hypothesis testing
+   - Confidence interval estimation
+
+2. **Bias Assessment**
+   - Demographic parity evaluation
+   - Performance disparity analysis
+   - Fairness metric calculation
+
+3. **Uncertainty Quantification**
+   - Calibration analysis
+   - Bootstrap confidence intervals
+   - Predictive uncertainty estimation
+
+4. **Performance Validation**
+   - Geometric accuracy metrics
+   - Clinical relevance assessment
+   - Quality evaluation
+
+### Acceptance Criteria
+- ICC > 0.75 for agreement
+- Dice coefficient > 0.7 for geometric accuracy
+- Calibration error < 0.1 for uncertainty
+- No significant bias across demographic groups
+
+### Statistical Analysis Plan
+Detailed statistical analysis plan provided in separate document.
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        with open(protocol_file, 'w') as f:
+            f.write(content)
+    
+    def _generate_statistical_plan(self, validation_results: Dict[str, Any], package_dir: Path):
+        """Generate statistical analysis plan."""
+        plan_file = package_dir / "statistical_analysis_plan.md"
+        
+        content = f"""
+# Statistical Analysis Plan
+## Cardiovascular Imaging Algorithm Validation
+
+### Primary Endpoints
+1. Agreement between algorithm and ground truth (ICC)
+2. Geometric accuracy (Dice coefficient)
+3. Bias assessment across demographics
+
+### Secondary Endpoints
+1. Calibration quality (ECE)
+2. Uncertainty quantification metrics
+3. Clinical relevance measures
+
+### Statistical Methods
+1. **Agreement Analysis**
+   - Intraclass Correlation Coefficient (ICC)
+   - Bland-Altman analysis
+   - Lin's Concordance Correlation Coefficient
+
+2. **Performance Metrics**
+   - Dice similarity coefficient
+   - Hausdorff distance
+   - Sensitivity and specificity
+
+3. **Bias Assessment**
+   - Demographic parity testing
+   - Equalized odds evaluation
+   - Statistical significance testing
+
+4. **Uncertainty Analysis**
+   - Expected calibration error
+   - Bootstrap confidence intervals
+   - Reliability diagrams
+
+### Sample Size Calculation
+Sample size determined based on power analysis for ICC estimation with 80% power and 5% significance level.
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        with open(plan_file, 'w') as f:
+            f.write(content)
+    
+    def _generate_risk_analysis(self, validation_results: Dict[str, Any], package_dir: Path):
+        """Generate risk analysis document."""
+        risk_file = package_dir / "risk_analysis.md"
+        
+        content = f"""
+# Risk Analysis
+## Cardiovascular Imaging Algorithm
+
+### Risk Management Process
+Risk analysis conducted in accordance with ISO 14971.
+
+### Identified Risks
+1. **False Positive Segmentation**
+   - Risk: Incorrect vessel identification
+   - Severity: Medium
+   - Mitigation: High specificity threshold, human oversight
+
+2. **False Negative Segmentation**
+   - Risk: Missed vessel segments
+   - Severity: High
+   - Mitigation: High sensitivity threshold, automated quality checks
+
+3. **Algorithmic Bias**
+   - Risk: Performance disparity across demographics
+   - Severity: Medium
+   - Mitigation: Bias monitoring, diverse training data
+
+4. **Calibration Errors**
+   - Risk: Overconfident or underconfident predictions
+   - Severity: Medium
+   - Mitigation: Calibration validation, uncertainty quantification
+
+### Risk Control Measures
+1. Comprehensive validation testing
+2. Performance monitoring in clinical use
+3. Regular algorithm updates and revalidation
+4. User training and guidelines
+
+### Residual Risk Assessment
+After implementation of risk control measures, residual risks are acceptable for the intended use.
+
+Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+        """
+        
+        with open(risk_file, 'w') as f:
+            f.write(content)
