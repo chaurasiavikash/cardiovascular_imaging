@@ -18,6 +18,8 @@ root_dir = Path(__file__).parent.parent
 # Add the src directory to sys.path
 sys.path.insert(0, str(root_dir / "src"))
 
+ 
+
 from core.data_manager import DataManager
 from validation.vessel_segmentation_validator import VesselSegmentationValidator
 from validation.statistical_validator import StatisticalValidator
@@ -83,43 +85,67 @@ def main():
         # Step 4: Statistical validation
         logger.info("📈 Step 4: Performing statistical validation analysis")
         
+        # Use flattened data for statistical validation
+        gt_flat = validation_data["ground_truth"].flatten()
+        pred_flat = validation_data["predictions"].flatten()
+        
         statistical_results = statistical_validator.comprehensive_statistical_validation(
-            validation_data["ground_truth"].flatten(), 
-            validation_data["predictions"].flatten(),
+            gt_flat,
+            pred_flat,
             validation_data.get("clinical_data", {})
         )
         
-        icc_value = statistical_results['agreement_analysis']['icc']['icc_value']
+        icc_value = statistical_results.get('agreement_analysis', {}).get('icc', {}).get('icc_value', 0.0)
         logger.info(f"✅ Statistical validation completed - ICC: {icc_value:.3f}")
         
         # Step 5: Bias assessment
         logger.info("⚖️ Step 5: Conducting algorithmic bias assessment")
         
+        # Fix data dimensions for bias assessment
+        pred_flat = validation_data["predictions"].flatten()
+        gt_flat = validation_data["ground_truth"].flatten()
+        demographics = validation_data.get("demographics", {})
+        
+        # Ensure demographics match the number of samples, not flattened data
+        n_samples = len(validation_data["predictions"])
+        demographics_fixed = {}
+        for key, values in demographics.items():
+            if len(values) == n_samples:
+                # Expand demographics to match flattened data
+                demographics_fixed[key] = []
+                for i, sample_value in enumerate(values):
+                    # Repeat each demographic value for all pixels in that sample
+                    pixels_per_sample = validation_data["predictions"][i].size
+                    demographics_fixed[key].extend([sample_value] * pixels_per_sample)
+            else:
+                demographics_fixed[key] = values
+        
         bias_results = bias_assessor.assess_algorithmic_bias(
-            validation_data["predictions"].flatten(),
-            validation_data.get("demographics", {}),
-            validation_data["ground_truth"].flatten()
+            pred_flat,
+            demographics_fixed,
+            gt_flat
         )
         
-        bias_status = bias_results['bias_summary']['overall_bias_status']
+        bias_status = bias_results.get('bias_summary', {}).get('overall_bias_status', 'unknown')
         logger.info(f"✅ Bias assessment completed - Status: {bias_status}")
         
         # Step 6: Uncertainty quantification
         logger.info("🎲 Step 6: Quantifying prediction uncertainty")
         
         # Create mock model outputs for uncertainty analysis
+        pred_flat = validation_data["predictions"].flatten()
         mock_model_outputs = {
-            'prediction_variance': np.random.uniform(0.01, 0.1, len(validation_data["predictions"].flatten())),
-            'ensemble_predictions': np.random.random((5, len(validation_data["predictions"].flatten())))
+            'prediction_variance': np.random.uniform(0.01, 0.1, len(pred_flat)),
+            'ensemble_predictions': np.random.random((5, len(pred_flat)))
         }
         
         uncertainty_results = uncertainty_quantifier.quantify_uncertainty(
-            validation_data["predictions"].flatten(),
+            pred_flat,
             mock_model_outputs,
             validation_data["ground_truth"].flatten()
         )
         
-        uncertainty_status = uncertainty_results['uncertainty_summary']['uncertainty_status']
+        uncertainty_status = uncertainty_results.get('uncertainty_summary', {}).get('uncertainty_status', 'unknown')
         logger.info(f"✅ Uncertainty quantification completed - Status: {uncertainty_status}")
         
         # Step 7: Generate comprehensive reports
@@ -387,7 +413,7 @@ def print_validation_summary(results):
     # Overall Assessment
     print("\n🎯 OVERALL ASSESSMENT")
     
-    # Determine overall validation status
+    # Determine overall validation status with safe access
     dice_pass = geometric.get('dice_coefficient', 0.0) >= 0.7
     icc_pass = icc_data.get('icc_value', 0.0) >= 0.75
     bias_pass = bias_summary.get('overall_bias_status', '') in ['minimal_bias', 'acceptable_bias']

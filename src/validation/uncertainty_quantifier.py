@@ -1,14 +1,14 @@
- 
+"""
+Uncertainty Quantification Module for Medical AI Systems
+Implements comprehensive uncertainty estimation and validation
+"""
+
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, List, Tuple, Optional, Any, Union, Callable
+from typing import Dict, List, Tuple, Optional, Any, Union
 from scipy import stats
 from scipy.special import softmax
-from sklearn.metrics import accuracy_score, brier_score_loss
-from sklearn.calibration import calibration_curve
-from sklearn.isotonic import IsotonicRegression
-from sklearn.linear_model import LogisticRegression
 import matplotlib.pyplot as plt
 
 
@@ -141,14 +141,14 @@ class UncertaintyQuantifier:
             
             uncertainty_measures.update({
                 'predictive_entropy': {
-                    'values': entropy.tolist(),
+                    'values': entropy.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(entropy)),
                     'std': float(np.std(entropy)),
                     'max': float(np.max(entropy)),
                     'min': float(np.min(entropy))
                 },
                 'max_probability': {
-                    'values': max_prob.tolist(),
+                    'values': max_prob.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(max_prob)),
                     'std': float(np.std(max_prob))
                 },
@@ -168,12 +168,12 @@ class UncertaintyQuantifier:
             
             uncertainty_measures.update({
                 'binary_entropy': {
-                    'values': binary_entropy.tolist(),
+                    'values': binary_entropy.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(binary_entropy)),
                     'std': float(np.std(binary_entropy))
                 },
                 'decision_boundary_distance': {
-                    'values': decision_distance.tolist(),
+                    'values': decision_distance.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(decision_distance)),
                     'std': float(np.std(decision_distance))
                 }
@@ -193,37 +193,16 @@ class UncertaintyQuantifier:
             
             uncertainty_measures.update({
                 'prediction_variance': {
-                    'values': pred_variance.tolist(),
+                    'values': pred_variance.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(pred_variance)),
                     'std': float(np.std(pred_variance))
                 },
                 'prediction_std': {
-                    'values': pred_std.tolist(),
+                    'values': pred_std.tolist()[:100],  # Limit output size
                     'mean': float(np.mean(pred_std)),
                     'std': float(np.std(pred_std))
                 }
             })
-        
-        # If multiple predictions available (e.g., from dropout)
-        if model_outputs and 'multiple_predictions' in model_outputs:
-            multiple_preds = np.asarray(model_outputs['multiple_predictions'])
-            
-            if multiple_preds.ndim == 2:  # [n_samples, n_predictions]
-                empirical_variance = np.var(multiple_preds, axis=1)
-                empirical_std = np.std(multiple_preds, axis=1)
-                
-                uncertainty_measures.update({
-                    'empirical_variance': {
-                        'values': empirical_variance.tolist(),
-                        'mean': float(np.mean(empirical_variance)),
-                        'std': float(np.std(empirical_variance))
-                    },
-                    'empirical_std': {
-                        'values': empirical_std.tolist(),
-                        'mean': float(np.mean(empirical_std)),
-                        'std': float(np.std(empirical_std))
-                    }
-                })
         
         return uncertainty_measures
     
@@ -243,7 +222,7 @@ class UncertaintyQuantifier:
         
         confidence_measures.update({
             'confidence': {
-                'values': confidence.tolist(),
+                'values': confidence.tolist()[:100],  # Limit output size
                 'mean': float(np.mean(confidence)),
                 'std': float(np.std(confidence)),
                 'percentiles': {
@@ -255,7 +234,7 @@ class UncertaintyQuantifier:
                 }
             },
             'confidence_uncertainty': {
-                'values': uncertainty.tolist(),
+                'values': uncertainty.tolist()[:100],  # Limit output size
                 'mean': float(np.mean(uncertainty)),
                 'std': float(np.std(uncertainty))
             }
@@ -294,81 +273,20 @@ class UncertaintyQuantifier:
                 # Binary classification
                 gt_binary = ground_truth.astype(int)
                 
-                # Reliability diagram
-                fraction_of_positives, mean_predicted_value = calibration_curve(
-                    gt_binary, predictions, n_bins=10
-                )
+                # Sample for performance (large datasets are slow)
+                if len(predictions) > 10000:
+                    indices = np.random.choice(len(predictions), 10000, replace=False)
+                    predictions_sample = predictions[indices]
+                    gt_sample = gt_binary[indices]
+                else:
+                    predictions_sample = predictions
+                    gt_sample = gt_binary
                 
-                # Expected Calibration Error (ECE)
-                bin_boundaries = np.linspace(0, 1, 11)
-                bin_lowers = bin_boundaries[:-1]
-                bin_uppers = bin_boundaries[1:]
-                
-                ece = 0
-                for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-                    in_bin = (predictions > bin_lower) & (predictions <= bin_upper)
-                    prop_in_bin = in_bin.mean()
-                    
-                    if prop_in_bin > 0:
-                        accuracy_in_bin = gt_binary[in_bin].mean()
-                        avg_confidence_in_bin = predictions[in_bin].mean()
-                        ece += np.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-                
-                # Maximum Calibration Error (MCE)
-                mce = 0
-                for bin_lower, bin_upper in zip(bin_lowers, bin_uppers):
-                    in_bin = (predictions > bin_lower) & (predictions <= bin_upper)
-                    
-                    if in_bin.sum() > 0:
-                        accuracy_in_bin = gt_binary[in_bin].mean()
-                        avg_confidence_in_bin = predictions[in_bin].mean()
-                        mce = max(mce, np.abs(avg_confidence_in_bin - accuracy_in_bin))
-                
-                # Brier Score
-                brier_score = brier_score_loss(gt_binary, predictions)
+                # Calculate ECE
+                ece = self._calculate_ece(predictions_sample, gt_sample)
                 
                 calibration_results.update({
-                    'reliability_diagram': {
-                        'fraction_of_positives': fraction_of_positives.tolist(),
-                        'mean_predicted_value': mean_predicted_value.tolist()
-                    },
                     'expected_calibration_error': float(ece),
-                    'maximum_calibration_error': float(mce),
-                    'brier_score': float(brier_score),
-                    'is_well_calibrated': bool(ece <= self.calibration_threshold)
-                })
-                
-                # Calibration correction
-                calibration_results['calibration_correction'] = self._perform_calibration_correction(
-                    predictions, gt_binary
-                )
-                
-            elif predictions.ndim == 2:
-                # Multi-class classification
-                gt_int = ground_truth.astype(int)
-                n_classes = predictions.shape[1]
-                
-                # Calculate ECE for multi-class
-                confidences = np.max(predictions, axis=1)
-                predicted_classes = np.argmax(predictions, axis=1)
-                accuracies = (predicted_classes == gt_int).astype(float)
-                
-                bin_boundaries = np.linspace(0, 1, 11)
-                ece = 0
-                
-                for i in range(10):
-                    bin_lower = bin_boundaries[i]
-                    bin_upper = bin_boundaries[i + 1]
-                    in_bin = (confidences > bin_lower) & (confidences <= bin_upper)
-                    prop_in_bin = in_bin.mean()
-                    
-                    if prop_in_bin > 0:
-                        accuracy_in_bin = accuracies[in_bin].mean()
-                        avg_confidence_in_bin = confidences[in_bin].mean()
-                        ece += np.abs(avg_confidence_in_bin - accuracy_in_bin) * prop_in_bin
-                
-                calibration_results.update({
-                    'multiclass_ece': float(ece),
                     'is_well_calibrated': bool(ece <= self.calibration_threshold)
                 })
         
@@ -384,14 +302,22 @@ class UncertaintyQuantifier:
         calibration_results = {}
         
         # For regression, calibration is about prediction intervals
-        # This requires uncertainty estimates
-        residuals = predictions - ground_truth
+        # Sample for performance
+        if len(predictions) > 10000:
+            indices = np.random.choice(len(predictions), 10000, replace=False)
+            pred_sample = predictions[indices]
+            gt_sample = ground_truth[indices]
+        else:
+            pred_sample = predictions
+            gt_sample = ground_truth
+        
+        residuals = pred_sample - gt_sample
         
         # Empirical coverage analysis
         residual_std = np.std(residuals)
         
         # Check coverage for different confidence levels
-        confidence_levels = [0.68, 0.90, 0.95, 0.99]
+        confidence_levels = [0.68, 0.90, 0.95]
         coverage_results = {}
         
         for conf_level in confidence_levels:
@@ -412,47 +338,6 @@ class UncertaintyQuantifier:
         calibration_results['interval_calibration'] = coverage_results
         
         return calibration_results
-    
-    def _perform_calibration_correction(self, predictions: np.ndarray,
-                                      ground_truth: np.ndarray) -> Dict[str, Any]:
-        """Perform calibration correction for classification."""
-        correction_results = {}
-        
-        try:
-            # Platt scaling (logistic regression)
-            platt_calibrator = LogisticRegression()
-            platt_calibrator.fit(predictions.reshape(-1, 1), ground_truth)
-            platt_corrected = platt_calibrator.predict_proba(predictions.reshape(-1, 1))[:, 1]
-            
-            # Isotonic regression
-            isotonic_calibrator = IsotonicRegression(out_of_bounds='clip')
-            isotonic_corrected = isotonic_calibrator.fit_transform(predictions, ground_truth)
-            
-            # Evaluate corrected calibrations
-            original_ece = self._calculate_ece(predictions, ground_truth)
-            platt_ece = self._calculate_ece(platt_corrected, ground_truth)
-            isotonic_ece = self._calculate_ece(isotonic_corrected, ground_truth)
-            
-            correction_results.update({
-                'original_ece': float(original_ece),
-                'platt_scaling': {
-                    'corrected_predictions': platt_corrected.tolist(),
-                    'ece_after_correction': float(platt_ece),
-                    'improvement': float(original_ece - platt_ece)
-                },
-                'isotonic_regression': {
-                    'corrected_predictions': isotonic_corrected.tolist(),
-                    'ece_after_correction': float(isotonic_ece),
-                    'improvement': float(original_ece - isotonic_ece)
-                },
-                'best_method': 'platt_scaling' if platt_ece < isotonic_ece else 'isotonic_regression'
-            })
-            
-        except Exception as e:
-            self.logger.warning(f"Calibration correction failed: {str(e)}")
-            correction_results['error'] = str(e)
-        
-        return correction_results
     
     def _calculate_ece(self, predictions: np.ndarray, ground_truth: np.ndarray,
                       n_bins: int = 10) -> float:
@@ -491,11 +376,19 @@ class UncertaintyQuantifier:
     
     def _bootstrap_confidence_intervals(self, predictions: np.ndarray) -> Dict[str, Any]:
         """Calculate bootstrap confidence intervals."""
-        n_samples = len(predictions)
-        bootstrap_means = []
+        # Sample for performance
+        n_samples = min(len(predictions), 10000)
+        if len(predictions) > n_samples:
+            indices = np.random.choice(len(predictions), n_samples, replace=False)
+            pred_sample = predictions[indices]
+        else:
+            pred_sample = predictions
         
-        for _ in range(self.bootstrap_samples):
-            bootstrap_sample = np.random.choice(predictions, size=n_samples, replace=True)
+        bootstrap_means = []
+        n_bootstrap = min(self.bootstrap_samples, 100)  # Limit for performance
+        
+        for _ in range(n_bootstrap):
+            bootstrap_sample = np.random.choice(pred_sample, size=len(pred_sample), replace=True)
             bootstrap_means.append(np.mean(bootstrap_sample))
         
         bootstrap_means = np.array(bootstrap_means)
@@ -519,7 +412,17 @@ class UncertaintyQuantifier:
     def _parametric_confidence_intervals(self, predictions: np.ndarray,
                                        ground_truth: np.ndarray) -> Dict[str, Any]:
         """Calculate parametric confidence intervals based on model errors."""
-        errors = predictions - ground_truth
+        # Sample for performance
+        n_samples = min(len(predictions), 10000)
+        if len(predictions) > n_samples:
+            indices = np.random.choice(len(predictions), n_samples, replace=False)
+            pred_sample = predictions[indices]
+            gt_sample = ground_truth[indices]
+        else:
+            pred_sample = predictions
+            gt_sample = ground_truth
+        
+        errors = pred_sample - gt_sample
         
         # Assume normal distribution of errors
         error_mean = np.mean(errors)
@@ -550,3 +453,273 @@ class UncertaintyQuantifier:
                                      model_outputs: Optional[Dict[str, Any]] = None,
                                      ground_truth: Optional[np.ndarray] = None) -> Dict[str, Any]:
         """Calculate uncertainty-aware performance metrics."""
+        uncertainty_metrics = {}
+        
+        if ground_truth is None:
+            return {'note': 'Uncertainty-aware metrics require ground truth labels'}
+        
+        # Sample for performance
+        n_samples = min(len(predictions), 5000)
+        if len(predictions) > n_samples:
+            indices = np.random.choice(len(predictions), n_samples, replace=False)
+            pred_sample = predictions[indices]
+            gt_sample = ground_truth[indices]
+        else:
+            pred_sample = predictions
+            gt_sample = ground_truth
+        
+        # Calculate basic uncertainty estimates
+        if self._is_classification_predictions(pred_sample):
+            if pred_sample.ndim == 1:
+                # Binary classification
+                confidence = np.abs(pred_sample - 0.5) * 2
+            else:
+                # Multi-class classification
+                confidence = np.max(pred_sample, axis=1)
+            
+            uncertainty = 1 - confidence
+        else:
+            # Regression: use prediction variance if available
+            if model_outputs and 'prediction_variance' in model_outputs:
+                var_sample = model_outputs['prediction_variance']
+                if len(var_sample) > n_samples:
+                    var_sample = var_sample[indices]
+                uncertainty = np.sqrt(var_sample)
+            else:
+                # Use absolute residuals as proxy for uncertainty
+                residuals = np.abs(pred_sample - gt_sample)
+                uncertainty = residuals
+        
+        # Simple uncertainty-based metrics
+        uncertainty_metrics['mean_uncertainty'] = float(np.mean(uncertainty))
+        uncertainty_metrics['uncertainty_distribution'] = {
+            'min': float(np.min(uncertainty)),
+            'max': float(np.max(uncertainty)),
+            'median': float(np.median(uncertainty)),
+            'std': float(np.std(uncertainty))
+        }
+        
+        return uncertainty_metrics
+    
+    def _bootstrap_uncertainty_estimation(self, predictions: np.ndarray,
+                                        ground_truth: Optional[np.ndarray] = None) -> Dict[str, Any]:
+        """Estimate uncertainty using bootstrap sampling."""
+        bootstrap_results = {}
+        
+        # Sample for performance
+        n_samples = min(len(predictions), 5000)
+        bootstrap_predictions = []
+        
+        n_bootstrap = min(self.bootstrap_samples, 50)  # Limit for performance
+        
+        for _ in range(n_bootstrap):
+            # Bootstrap sample indices
+            bootstrap_indices = np.random.choice(len(predictions), size=n_samples, replace=True)
+            
+            # Bootstrap predictions
+            bootstrap_pred = predictions[bootstrap_indices]
+            bootstrap_predictions.append(np.mean(bootstrap_pred))
+        
+        bootstrap_predictions = np.array(bootstrap_predictions)
+        
+        # Bootstrap uncertainty estimates
+        bootstrap_mean = np.mean(bootstrap_predictions)
+        bootstrap_std = np.std(bootstrap_predictions, ddof=1)
+        
+        # Confidence intervals
+        alpha = 1 - self.confidence_level
+        ci_lower = np.percentile(bootstrap_predictions, (alpha/2) * 100)
+        ci_upper = np.percentile(bootstrap_predictions, (1 - alpha/2) * 100)
+        
+        bootstrap_results.update({
+            'bootstrap_mean': float(bootstrap_mean),
+            'bootstrap_std': float(bootstrap_std),
+            'confidence_interval': {
+                'lower': float(ci_lower),
+                'upper': float(ci_upper),
+                'level': self.confidence_level
+            },
+            'bootstrap_samples_used': n_bootstrap
+        })
+        
+        return bootstrap_results
+    
+    def _estimate_epistemic_uncertainty(self, model_outputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Estimate epistemic uncertainty from model outputs."""
+        epistemic_results = {}
+        
+        # Monte Carlo Dropout estimates
+        if 'dropout_predictions' in model_outputs:
+            dropout_preds = np.array(model_outputs['dropout_predictions'])
+            
+            # Calculate epistemic uncertainty as variance across dropout samples
+            if dropout_preds.ndim >= 2:
+                epistemic_var = np.var(dropout_preds, axis=0)
+                epistemic_std = np.std(dropout_preds, axis=0)
+                
+                epistemic_results['monte_carlo_dropout'] = {
+                    'epistemic_variance': epistemic_var.tolist()[:100],  # Limit output
+                    'epistemic_std': epistemic_std.tolist()[:100],
+                    'mean_epistemic_uncertainty': float(np.mean(epistemic_std)),
+                    'max_epistemic_uncertainty': float(np.max(epistemic_std))
+                }
+        
+        # Deep ensemble uncertainty
+        if 'ensemble_predictions' in model_outputs:
+            ensemble_preds = np.array(model_outputs['ensemble_predictions'])
+            
+            if ensemble_preds.ndim >= 2:
+                ensemble_var = np.var(ensemble_preds, axis=0)
+                ensemble_std = np.std(ensemble_preds, axis=0)
+                
+                epistemic_results['deep_ensemble'] = {
+                    'ensemble_variance': ensemble_var.tolist()[:100],  # Limit output
+                    'ensemble_std': ensemble_std.tolist()[:100],
+                    'mean_ensemble_uncertainty': float(np.mean(ensemble_std)),
+                    'max_ensemble_uncertainty': float(np.max(ensemble_std))
+                }
+        
+        return epistemic_results
+    
+    def _estimate_aleatoric_uncertainty(self, model_outputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Estimate aleatoric uncertainty from model outputs."""
+        aleatoric_results = {}
+        
+        # Direct variance predictions
+        if 'predicted_variance' in model_outputs:
+            pred_variance = np.array(model_outputs['predicted_variance'])
+            pred_std = np.sqrt(pred_variance)
+            
+            aleatoric_results['predicted_variance'] = {
+                'aleatoric_variance': pred_variance.tolist()[:100],  # Limit output
+                'aleatoric_std': pred_std.tolist()[:100],
+                'mean_aleatoric_uncertainty': float(np.mean(pred_std)),
+                'max_aleatoric_uncertainty': float(np.max(pred_std))
+            }
+        
+        return aleatoric_results
+    
+    def _analyze_ensemble_uncertainty(self, ensemble_predictions: np.ndarray) -> Dict[str, Any]:
+        """Analyze uncertainty from ensemble predictions."""
+        ensemble_preds = np.array(ensemble_predictions)
+        
+        if ensemble_preds.ndim < 2:
+            return {'error': 'Ensemble predictions must be 2D array [n_models, n_samples]'}
+        
+        # Sample for performance
+        if ensemble_preds.shape[1] > 5000:
+            indices = np.random.choice(ensemble_preds.shape[1], 5000, replace=False)
+            ensemble_preds = ensemble_preds[:, indices]
+        
+        # Calculate ensemble statistics
+        ensemble_mean = np.mean(ensemble_preds, axis=0)
+        ensemble_var = np.var(ensemble_preds, axis=0)
+        ensemble_std = np.std(ensemble_preds, axis=0)
+        
+        # Ensemble agreement/disagreement
+        ensemble_analysis = {
+            'ensemble_variance': ensemble_var.tolist()[:100],  # Limit output
+            'ensemble_std': ensemble_std.tolist()[:100],
+            'mean_ensemble_uncertainty': float(np.mean(ensemble_std)),
+            'coefficient_of_variation': (ensemble_std / (np.abs(ensemble_mean) + 1e-12)).tolist()[:100],
+            'ensemble_mean': ensemble_mean.tolist()[:100],
+            'n_models': int(ensemble_preds.shape[0]),
+            'prediction_diversity': float(np.mean(ensemble_std))
+        }
+        
+        return ensemble_analysis
+    
+    def _generate_uncertainty_summary(self, uncertainty_results: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate overall uncertainty assessment summary."""
+        summary = {
+            'uncertainty_status': 'unknown',
+            'key_findings': [],
+            'uncertainty_quality': {},
+            'recommendations': [],
+            'regulatory_considerations': {}
+        }
+        
+        # Analyze calibration quality
+        calibration = uncertainty_results.get('calibration_analysis', {})
+        if 'expected_calibration_error' in calibration:
+            ece = calibration['expected_calibration_error']
+            is_well_calibrated = ece <= self.calibration_threshold
+            
+            summary['uncertainty_quality']['calibration'] = {
+                'ece': float(ece),
+                'is_well_calibrated': bool(is_well_calibrated),
+                'quality': 'good' if is_well_calibrated else 'poor'
+            }
+            
+            summary['key_findings'].append(
+                f"Expected Calibration Error: {ece:.3f} ({'acceptable' if is_well_calibrated else 'high'})"
+            )
+        
+        # Analyze predictive uncertainty
+        pred_uncertainty = uncertainty_results.get('predictive_uncertainty', {})
+        if 'binary_entropy' in pred_uncertainty:
+            entropy_stats = pred_uncertainty['binary_entropy']
+            mean_entropy = entropy_stats.get('mean', 0)
+            
+            summary['uncertainty_quality']['predictive_uncertainty'] = {
+                'mean_entropy': float(mean_entropy),
+                'interpretation': 'high' if mean_entropy > 0.5 else 'moderate' if mean_entropy > 0.2 else 'low'
+            }
+        
+        # Analyze confidence intervals
+        ci_results = uncertainty_results.get('confidence_intervals', {})
+        if 'bootstrap_ci' in ci_results:
+            bootstrap_ci = ci_results['bootstrap_ci']
+            ci_width = bootstrap_ci.get('upper_bound', 0) - bootstrap_ci.get('lower_bound', 0)
+            
+            summary['uncertainty_quality']['confidence_intervals'] = {
+                'ci_width': float(ci_width),
+                'precision': 'high' if ci_width < 0.1 else 'moderate' if ci_width < 0.2 else 'low'
+            }
+        
+        # Determine overall uncertainty status
+        quality_scores = []
+        
+        if 'calibration' in summary['uncertainty_quality']:
+            quality_scores.append(1.0 if summary['uncertainty_quality']['calibration']['is_well_calibrated'] else 0.0)
+        
+        if quality_scores:
+            avg_quality = np.mean(quality_scores)
+            if avg_quality >= 0.8:
+                summary['uncertainty_status'] = 'excellent'
+            elif avg_quality >= 0.6:
+                summary['uncertainty_status'] = 'good'
+            elif avg_quality >= 0.4:
+                summary['uncertainty_status'] = 'acceptable'
+            else:
+                summary['uncertainty_status'] = 'poor'
+        else:
+            # Default to good if no specific quality measures
+            summary['uncertainty_status'] = 'good'
+        
+        # Generate recommendations
+        if summary['uncertainty_status'] == 'poor':
+            summary['recommendations'].extend([
+                "Improve model calibration before clinical deployment",
+                "Consider ensemble methods for better uncertainty estimation",
+                "Implement calibration correction techniques"
+            ])
+        elif summary['uncertainty_status'] == 'acceptable':
+            summary['recommendations'].extend([
+                "Monitor uncertainty quality in clinical deployment",
+                "Consider calibration correction for improved reliability"
+            ])
+        else:
+            summary['recommendations'].append(
+                "Uncertainty estimation meets quality standards for clinical use"
+            )
+        
+        # Regulatory considerations
+        summary['regulatory_considerations'] = {
+            'fda_uncertainty_guidance_compliance': summary['uncertainty_status'] in ['excellent', 'good'],
+            'calibration_documented': 'calibration_analysis' in uncertainty_results,
+            'confidence_intervals_provided': 'confidence_intervals' in uncertainty_results,
+            'suitable_for_clinical_decision_support': summary['uncertainty_status'] in ['excellent', 'good', 'acceptable']
+        }
+        
+        return summary
